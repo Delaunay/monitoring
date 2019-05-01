@@ -72,3 +72,4 @@ docs/src/reference
 # PyBuilder
 target/
 
+*.csv
