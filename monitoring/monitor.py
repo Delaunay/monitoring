@@ -108,7 +108,12 @@ def make_report():
     raw_gpus = make_gpu_db(parse_csv_to_dict(cmd_get_gpu_info()))
     raw_pids = parse_csv_to_dict(cmd_get_gpu_pid())
 
-    gpu_stat_cpy = ['memory.used [MiB]', 'utilization.memory [%]', 'utilization.gpu [%]']
+    gpu_stat_cpy = [
+        'memory.used [MiB]',
+        'utilization.memory [%]',
+        'utilization.gpu [%]',
+        'memory.total [MiB]'
+    ]
 
     processed_pid = {}
     report = []
@@ -150,7 +155,8 @@ def make_report():
         ginfo = raw_gpus[gid]
 
         for k in gpu_stat_cpy:
-            process[k] = ginfo[k]
+            nk = k.replace('.', '_')
+            process_gpu[nk] = ginfo[k]
 
         process_report['gpus'].append(process_gpu)
 
