@@ -63,6 +63,172 @@ import json
 import copy
 import socket
 import datetime
+import time
+import psutil
+
+
+notuser_users = frozenset({
+    'systemd+',
+    'message+',
+    'syslog',
+    'daemon',
+    'munge',
+    'www-data',
+    'statd',
+    'root',
+    'systemd-resolve',
+    'avahi',
+    'messagebus',
+    'colord',
+    'lp',
+    'kernoops',
+    'whoopsie',
+    'rtkit',
+    'mpd',
+    'gdm',
+    'systemd-timesync',
+    'systemd-network'
+})
+
+
+class ParentProcess:
+    def __init__(self, pid, name, username, children):
+        self.pid = pid
+        self.name = name
+        self.user = username
+        self.children = children
+        self.cgroup = None
+        self.gpus = None
+        self.errors = {}
+        self.hostname = socket.gethostname()
+        self.proc_info = {}
+
+    def to_dict(self, to_str=str):
+            return {
+                'pid': self.pid,
+                'name': self.name,
+                'user': self.user,
+                'children': self.children,
+                'cgroup': self.cgroup,
+                'gpus': self.gpus,
+                'errors': self.errors,
+                'hostname': self.hostname,
+                'timestamp': to_str(datetime.datetime.now()),
+            }
+
+    def add_proc_info(self):
+        proc = psutil.Process(int(self.pid))
+        with proc.oneshot():
+            try:
+                mem = proc.memory_full_info()
+                self.proc_info = {
+                    'cpu%': proc.cpu_percent(),
+                    'mem_rss': mem.rss,
+                    'mem_vms': mem.vms,
+                    'mem_uss': mem.uss
+                }
+            except psutil.AccessDenied as e:
+                self.errors['psutil'] = str(e)
+
+    def add_cgroup(self):
+        try:
+            cgroup_config = get_cgroup_config(self.pid)
+            if cgroup_config is None:
+                return
+
+            self.cgroup = {}
+
+            for k, v in cgroup_config.items():
+                nk = k.replace('.', '_')
+                self.cgroup[nk] = v
+
+        except FileNotFoundError as e:
+            self.errors['cgroup_error'] = e.filename
+
+
+def get_parent(proc):
+    parent = proc.parent()
+
+    if parent is None:
+        return parent
+
+    if parent.username() in notuser_users:
+        return None
+
+    return parent
+
+
+def find_top_most_parent(proc, processes, children, children_to_parent):
+    parent = get_parent(proc)
+
+    if parent is None:
+        for c in children:
+            children_to_parent[c] = str(proc.pid)
+
+        return ParentProcess(
+            pid=str(proc.pid),
+            username=proc.username(),
+            children=children,
+            name=proc.name()
+        )
+    else:
+        if proc.pid in processes:
+            processes.pop(proc.pid)
+
+        children[str(proc.pid)] = proc.name()
+        return find_top_most_parent(parent, processes, children, children_to_parent)
+
+
+def make_process_trees():
+    """ return a list of all the processes as a tree"""
+    processes = []
+    pids = dict()
+
+    # make a clean list of user processes
+    for proc in psutil.process_iter(attrs=['pid', 'name', 'username', 'ppid']):
+        if proc.username() in notuser_users:
+            continue
+
+        processes.append(proc)
+        pids[proc.pid] = proc
+
+    # Make Tree of processes
+    clean_list = []
+    children_to_parent = {}
+    parent_accessor = {}
+
+    while len(pids) > 0:
+        (pid, proc) = pids.popitem()
+        parent = find_top_most_parent(proc, pids, {}, children_to_parent)
+
+        if parent.pid in parent_accessor:
+            oparent = parent_accessor[parent.pid]
+            oparent.children.update(parent.children)
+
+        elif parent.user not in notuser_users:
+            clean_list.append(parent)
+            parent_accessor[parent.pid] = parent
+
+            parent.add_cgroup()
+            parent.add_proc_info()
+
+    return children_to_parent, clean_list, parent_accessor
+
+
+class ProcessDatabase:
+
+    def __init__(self):
+        a, b, c = make_process_trees()
+        self.children_to_parent = a
+        self.process_list = b
+        self.get_parent_object = c
+
+    def get_parent_process(self, pid):
+        ppid = self.children_to_parent.get(pid, pid)
+        return self.get_parent_object[ppid]
+
+    def make_report(self):
+        return [proc.to_dict() for proc in self.process_list]
 
 
 def parse_csv_to_dict(data, sep=','):
@@ -98,17 +264,6 @@ def get_process_info(pid):
     cmd = f'ps -o "pid,user,%cpu,%mem,c,etime,ppid,rss,time,vsz,comm" -p {pid}'
     print(cmd)
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
-
-
-notuser_users = {
-    'systemd+',
-    'message+',
-    'syslog',
-    'daemon',
-    'munge',
-    'www-data',
-    'statd'
-}
 
 
 def cmd_get_all_process_pid():
@@ -199,10 +354,12 @@ def get_cgroup_config(pid):
     """
 
     cgroup_file = open(f'/proc/{pid}/cgroup', 'r').read().split('/n')
+
     slurm_cg_all = get_slurm_cg(cgroup_file)
+    if slurm_cg_all is None:
+        return None
 
     slurm_cg = '/'.join(slurm_cg_all[0:3])
-
     cgroup_config = {}
 
     for cname, cfile, parser in cgroup_constraint:
@@ -222,13 +379,16 @@ def get_cgroup_config(pid):
 def insert_cgroup_config(pid, process_report):
     try:
         cgroup_config = get_cgroup_config(pid)
+        if cgroup_config is None:
+            return
+
+        cgroup_config2 = {}
+        process_report['cgroup'] = cgroup_config2
 
         for k, v in cgroup_config.items():
             nk = k.replace('.', '_')
-            if nk in process_report:
-                print('OVERRIDING DATA')
+            cgroup_config2[nk] = v
 
-            process_report[nk] = v
     except FileNotFoundError as e:
         process_report['cgroup_error'] = e.filename
 
@@ -244,22 +404,14 @@ def filter_pids(all_pids):
 
 
 def make_report():
+    # Get all CPU Jobs
+    process_db = ProcessDatabase()
+
     # Get GPU overall usage
     raw_gpus = make_gpu_db(parse_csv_to_dict(cmd_get_gpu_info()))
 
     # Get GPU usage per process
     raw_pids = parse_csv_to_dict(cmd_get_gpu_pid())
-
-    # Get All CPU Jobs
-    # This does not work
-    # we need to process tree
-    raw_allpids = filter_pids(parse_csv_to_dict(cmd_get_all_process_pid(), ' '))
-    for data in raw_allpids:
-        raw_pids.append({
-            "pid": data['PID'],
-            "process_name": data['COMMAND'],
-        })
-    # <<<<
 
     gpu_stat_cpy = [
         'memory.used [MiB]',
@@ -268,47 +420,14 @@ def make_report():
         'memory.total [MiB]'
     ]
 
-    processed_pid = {}
-    report = []
-    today = datetime.date.today()
-    day, month, year = today.day, today.month, today.year
-
+    # For all processes using GPUs update the parent process with the info
     for process in raw_pids:
         pid = process['pid']
         gid = process.get('gpu_uuid')
 
-        # Process is already using another GPU
-        process_report = None
-        if pid in processed_pid:
-            process_report = processed_pid[pid]
-        else:
-            process_report = dict()
-            insert_cgroup_config(pid, process_report)
-
-            now = datetime.datetime.now().time()
-            h, m, s = now.hour, now.minute, now.second
-
-            process_report['day'] = day
-            process_report['month'] = month
-            process_report['year'] = year
-            process_report['hour'] = h
-            process_report['minute'] = m
-            process_report['sec'] = s
-
-            process_report['hostname'] = socket.gethostname()
-            process_report['gpus'] = []
-            try:
-                pinfo = parse_csv_to_dict(get_process_info(pid), sep=' ')[0]
-
-                for k, v in pinfo.items():
-                    process_report[k] = v
-
-                # Only append at the end when nothing bad happened
-                processed_pid[pid] = process_report
-                report.append(process_report)
-
-            except subprocess.CalledProcessError as e:
-                process_report['get_process_info_error'] = e.returncode
+        process_report = process_db.get_parent_process(pid)
+        if process_report.gpus is None:
+            process_report.gpus = []
 
         # if a GPU was detected add the GPU info
         if gid:
@@ -319,9 +438,71 @@ def make_report():
                 nk = k.replace('.', '_')
                 process_gpu[nk] = ginfo[k]
 
-            process_report['gpus'].append(process_gpu)
+            process_report.gpus.append(process_gpu)
 
-    return raw_gpus, raw_pids, report
+    return raw_gpus, raw_pids, process_db.make_report()
+
+
+class Chrono:
+    start = 0
+    end = 0
+
+    def __enter__(self):
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            raise exc_type
+
+        self.end = time.time()
+
+    @property
+    def val(self):
+        return self.end - self.start
+
+
+def daemon(args):
+    to_be_pushed = []
+    last_push_time = time.time()
+    last_report_time = 0
+
+    client = MongoClient(args.mongodb)
+    collections = client.usage_reports.data
+
+    while True:
+        now = time.time()
+        report = []
+
+        # Time to check the node again
+        if now - last_report_time > args.check_every:
+            last_report_time = time.time()
+            raw_gpus, raw_pids, report = make_report()
+
+            if not args.no_print:
+                print(json.dumps(raw_gpus, indent=2))
+                print(json.dumps(raw_pids, indent=2))
+                print(json.dumps(report, indent=2))
+
+        # if a report was generated add to the pending reports
+        if report:
+            to_be_pushed.extend(report)
+
+        # Time to push to DB
+        if now - last_push_time > args.push_every or not args.daemon:
+            if len(to_be_pushed) > 0 and not args.dry_run:
+                collections.insert_many(to_be_pushed)
+                print(f'Inserting {len(to_be_pushed)}')
+
+            to_be_pushed = []
+            last_push_time = time.time()
+
+        if not args.daemon:
+            client.close()
+            break
+
+        # do not use 100% of the processor
+        time.sleep(0.01)
 
 
 if __name__ == '__main__':
@@ -334,23 +515,12 @@ if __name__ == '__main__':
     parser.add_argument('--no-print', action='store_true', default=False)
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--daemon', action='store_true')
-    parser.add_argument('--check-every', default=1, help='second')
-    parser.add_argument('--push-every', default=60, help='second')
+    parser.add_argument('--check-every', type=int, default=5, help='second')
+    parser.add_argument('--push-every', type=int, default=60, help='second')
 
-    args = parser.parse_args()
+    opt = parser.parse_args()
 
-    for k, v in vars(args).items():
+    for k, v in vars(opt).items():
         print(f'{k:>30}:{v}')
 
-    raw_gpus, raw_pids, report = make_report()
-
-    if not args.no_print:
-        print(json.dumps(raw_gpus, indent=2))
-        print(json.dumps(raw_pids, indent=2))
-        print(json.dumps(report, indent=2))
-
-    if len(report) > 0 and not args.dry_run:
-        client = MongoClient(args.mongodb)
-        db = client.usage_reports
-        db.data.insert_many(report)
-        client.close()
+    daemon(opt)
