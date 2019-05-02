@@ -4,31 +4,34 @@
     ```
 [
   {
-    "day": 1,
-    "month": 5,
-    "year": 2019,
-    "hour": 14,
-    "minute": 19,
-    "sec": 30,
-    "hostname": "power92.server.mila.quebec",
+    "pid": "107664",
+    "name": "bash",
+    "user": "delaunap",
+    "children": {
+      "111107": "vi",
+      "107733": "python",
+      "60202": "python",
+      "59794": "python"
+    },
+    "cgroup": {
+      "cpuset_effective_cpus": {
+        "total_requested": 4,
+        "cpu_set": "4-7"
+      },
+      "cpuacct_usage_percpu": {
+        "4": "22286403972",
+        "5": "29442837182",
+        "6": "20747031952",
+        "7": "24572310962"
+      },
+      "devices_allow": "[Errno 13] Permission denied: '/sys/fs/cgroup/devices/slurm_power92/uid_1500000082/job_68543/devices.allow'",
+      "memory_usage_in_bytes": "2065039360",
+      "memory_limit_in_bytes": "8589934592"
+    },
     "gpus": [
       {
-        "timestamp": "2019/05/01 14:19:30.662",
-        "pid": "104523",
-        "process_name": "python",
-        "gpu_name": "Tesla V100-SXM2-16GB",
-        "used_gpu_memory [MiB]": "663",
-        "gpu_bus_id": "00000004:04:00.0",
-        "gpu_uuid": "GPU-016b348f-3447-d57f-672a-9144fd65ae30",
-        "gpu_serial": "0324117166425",
-        "memory_used [MiB]": "673",
-        "utilization_memory [%]": "0",
-        "utilization_gpu [%]": "0",
-        "memory_total [MiB]": "16130"
-      },
-      {
-        "timestamp": "2019/05/01 14:19:30.663",
-        "pid": "104523",
+        "timestamp": "2019/05/02 13:19:11.218",
+        "pid": "107733",
         "process_name": "python",
         "gpu_name": "Tesla V100-SXM2-16GB",
         "used_gpu_memory [MiB]": "663",
@@ -41,19 +44,10 @@
         "memory_total [MiB]": "16130"
       }
     ],
-    "PID": "104523",
-    "USER": "delaunap",
-    "%CPU": "0.0",
-    "%MEM": "0.4",
-    "C": "0",
-    "ELAPSED": "02:38:21",
-    "PPID": "104473",
-    "RSS": "2455360",
-    "TIME": "00:00:05",
-    "VSZ": "23516352",
-    "COMMAND": "python"
+    "errors": {},
+    "hostname": "power92.server.mila.quebec",
+    "timestamp": "2019-05-02 13:19:11.220055"
   }
-
 ]
     ```
 """
@@ -101,32 +95,45 @@ class ParentProcess:
         self.gpus = None
         self.errors = {}
         self.hostname = socket.gethostname()
-        self.proc_info = {}
+        self.system = {}
 
     def to_dict(self, to_str=str):
-            return {
-                'pid': self.pid,
-                'name': self.name,
-                'user': self.user,
-                'children': self.children,
-                'cgroup': self.cgroup,
-                'gpus': self.gpus,
-                'errors': self.errors,
-                'hostname': self.hostname,
-                'timestamp': to_str(datetime.datetime.now()),
-            }
+        return {
+            'pid': self.pid,
+            'name': self.name,
+            'user': self.user,
+            'children': self.children,
+            'cgroup': self.cgroup,
+            'gpus': self.gpus,
+            'errors': self.errors,
+            'hostname': self.hostname,
+            'timestamp': to_str(datetime.datetime.now()),
+            'system': self.system
+        }
 
-    def add_proc_info(self):
+    def add_system_info(self):
         proc = psutil.Process(int(self.pid))
+
         with proc.oneshot():
+            cpu = psutil.cpu_times()
+            self.system['cpu%'] = proc.cpu_percent()
+
+            ptimes = proc.cpu_times()
+            self.system['cpu_user'] = ptimes[0]
+            self.system['cpu_sys'] = ptimes[1]
+            self.system['cpu_child_user'] = ptimes[2]
+            self.system['cpu_child_sys'] = ptimes[3]
+
+            self.system['user'] = cpu.user
+            self.system['iowait'] = cpu.iowait
+            self.system['system'] = cpu.system
+
             try:
                 mem = proc.memory_full_info()
-                self.proc_info = {
-                    'cpu%': proc.cpu_percent(),
-                    'mem_rss': mem.rss,
-                    'mem_vms': mem.vms,
-                    'mem_uss': mem.uss
-                }
+                self.system['mem_rss'] = mem.rss
+                self.system['mem_vms'] = mem.vms
+                self.system['mem_uss'] = mem.uss
+
             except psutil.AccessDenied as e:
                 self.errors['psutil'] = str(e)
 
@@ -210,7 +217,7 @@ def make_process_trees():
             parent_accessor[parent.pid] = parent
 
             parent.add_cgroup()
-            parent.add_proc_info()
+            parent.add_system_info()
 
     return children_to_parent, clean_list, parent_accessor
 
@@ -508,6 +515,7 @@ def daemon(args):
 if __name__ == '__main__':
     from pymongo import MongoClient
     import argparse
+    psutil.cpu_percent()
 
     # 172.16.38.50
     parser = argparse.ArgumentParser()
