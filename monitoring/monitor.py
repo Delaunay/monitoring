@@ -65,6 +65,8 @@ import psutil
 
 notuser_users = frozenset({
     'systemd+',
+    '_chrony',
+    'mail',
     'message+',
     'syslog',
     'daemon',
