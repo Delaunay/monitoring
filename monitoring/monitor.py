@@ -366,8 +366,7 @@ def get_cgroup_config(pid):
     3   :memory         :/slurm_power92/uid_1500000082/job_68543/step_0/task_0
     """
 
-    cgroup_file = open(f'/proc/{pid}/cgroup', 'r').read().split('/n')
-
+    cgroup_file = open(f'/proc/{pid}/cgroup', 'r').read().split('\n')
     slurm_cg_all = get_slurm_cg(cgroup_file)
     if slurm_cg_all is None:
         return None
