@@ -92,6 +92,8 @@ def acc_cgroup(report, key, value):
         "memory_limit_in_bytes": "8589934592"
       }
     """
+    if value is None:
+       return 
 
     val = float(value['cpuset_effective_cpus']['total_requested'])
     report['requested_cpu_count'].update(val)
