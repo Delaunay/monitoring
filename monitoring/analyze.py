@@ -34,6 +34,7 @@ system_metrics = [
 
 def acc_gpu(report, key, value):
     if value is None:
+        #print('no gpu?')
         return
 
     gpu_count = len(value)
@@ -44,6 +45,8 @@ def acc_gpu(report, key, value):
             v = gpu.get(k)
             if v:
                 report[f'gpu_{k}'].update(float(v))
+            else:
+                print(f'Missing value for {k}')
 
 
 def default_acc(report, key, value):
@@ -171,6 +174,10 @@ def to_csv(report):
 
     rows = []
     header = list(report[0].keys())
+    for h in report:
+        if len(h.keys()) > len(header):
+            header = h.keys()
+
 
     for data in report:
         row = []
@@ -199,9 +206,13 @@ if __name__ == '__main__':
 
     data = collection.find()
     usage_report = usage_per_user(data)
+    #print(usage_report)
     usage_report = implode_statstream(usage_report)
-
+    print(usage_report)
     header, data = to_csv(usage_report)
+
+    for h in header:
+        print(h)
 
     df = pd.DataFrame(data, columns=header)
     df.to_csv('full_report.csv', index=False)
@@ -209,26 +220,38 @@ if __name__ == '__main__':
     selected_cols = [
         'user',
         'avg_gpu_count', 'avg_gpu_memory_used [MiB]', 'avg_gpu_utilization_memory [%]', 'avg_gpu_memory_total [MiB]',
+        'avg_gpu_utilization_gpu [%]',
         'avg_children_count', 'avg_requested_cpu_count',    # 'avg_cpuacct_usage',
-        'avg_cpuacct_usage_s',
+        # 'avg_cpuacct_usage_s',
         # 'avg_cgroup_memory_limit_in_bytes', 'avg_cgroup_memory_usage_in_bytes',
         'avg_system_cpu_child_user', 'avg_system_cpu_child_sys',
-        'avg_cgroup_memory_limit_in_mib', 'avg_cgroup_memory_usage_in_mib'
+        # 'avg_cgroup_memory_limit_in_mib', 'avg_cgroup_memory_usage_in_mib'
     ]
 
     pd.set_option('display.max_rows', 500)
     pd.set_option('display.max_columns', 500)
     pd.set_option('display.width', 120)
+    #print(df)
 
     ns = 1000 * 1000 * 1000
     mio = 1024 * 1024
-    df.loc[:, 'avg_cgroup_memory_limit_in_mib'] = df['avg_cgroup_memory_limit_in_bytes'] / mio
-    df.loc[:, 'avg_cgroup_memory_usage_in_mib'] = df['avg_cgroup_memory_usage_in_bytes'] / mio
-    df.loc[:, 'avg_cpuacct_usage_s'] = df['avg_cpuacct_usage'] / ns
-    df = df[selected_cols]
+    try:
+        df.loc[:, 'avg_cgroup_memory_limit_in_mib'] = df['avg_cgroup_memory_limit_in_bytes'] / mio
+        df.loc[:, 'avg_cgroup_memory_usage_in_mib'] = df['avg_cgroup_memory_usage_in_bytes'] / mio
+        df.loc[:, 'avg_cpuacct_usage_s'] = df['avg_cpuacct_usage'] / ns
+        selected_cols.append('avg_cpuacct_usage_s')
+        selected_cols.append('avg_cgroup_memory_limit_in_mib')
+        selected_cols.append('avg_cgroup_memory_usage_in_mib')
+    except Exception as e:
+        print(e)
 
-    df.to_csv('reduced_report.csv', index=False)
-    print(df)
+    try:
+        df = df[selected_cols]
+
+        df.to_csv('reduced_report.csv', index=False)
+        print(df)
+    except Exception as e:
+        print(e)
 
     if args.delete_observed:
         collection.drop()
