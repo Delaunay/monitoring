@@ -287,7 +287,7 @@ status_query = \
 
 def cmd_get_gpu_info():
     cmd = f'nvidia-smi --query-gpu={status_query} --format=csv,nounits -u'
-    print(cmd)
+    # print(cmd)
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
@@ -296,7 +296,7 @@ pid_query = 'timestamp,pid,name,gpu_name,used_memory,gpu_bus_id,gpu_uuid,gpu_ser
 
 def cmd_get_gpu_pid():
     cmd = f'nvidia-smi --query-compute-apps={pid_query} --format=csv,nounits -u'
-    print(cmd)
+    # print(cmd)
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
