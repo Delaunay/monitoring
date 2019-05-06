@@ -65,6 +65,8 @@ import psutil
 
 notuser_users = frozenset({
     'systemd+',
+    '_chrony',
+    'mail',
     'message+',
     'syslog',
     'daemon',
@@ -350,9 +352,11 @@ cgroup_constraint = [
 def get_slurm_cg(cgroup_file):
     for row in cgroup_file:
         data = row.split(':')
-        if data[2].startswith('/slurm'):
-            return list(filter(lambda x: len(x.strip()) > 0, data[2].split('/')))
-
+        try:
+            if data[2].startswith('/slurm'):
+                return list(filter(lambda x: len(x.strip()) > 0, data[2].split('/')))
+        except IndexError:
+            pass
 
 def get_cgroup_config(pid):
     """
@@ -362,8 +366,7 @@ def get_cgroup_config(pid):
     3   :memory         :/slurm_power92/uid_1500000082/job_68543/step_0/task_0
     """
 
-    cgroup_file = open(f'/proc/{pid}/cgroup', 'r').read().split('/n')
-
+    cgroup_file = open(f'/proc/{pid}/cgroup', 'r').read().split('\n')
     slurm_cg_all = get_slurm_cg(cgroup_file)
     if slurm_cg_all is None:
         return None
@@ -417,10 +420,14 @@ def make_report():
     process_db = ProcessDatabase()
 
     # Get GPU overall usage
-    raw_gpus = make_gpu_db(parse_csv_to_dict(cmd_get_gpu_info()))
+    try:
+        raw_gpus = make_gpu_db(parse_csv_to_dict(cmd_get_gpu_info()))
 
-    # Get GPU usage per process
-    raw_pids = parse_csv_to_dict(cmd_get_gpu_pid())
+        # Get GPU usage per process
+        raw_pids = parse_csv_to_dict(cmd_get_gpu_pid())
+    except:
+        raw_gpus = []
+        raw_pids = []
 
     gpu_stat_cpy = [
         'memory.used [MiB]',
