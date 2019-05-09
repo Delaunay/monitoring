@@ -392,7 +392,6 @@ def get_slurm_job_request(jid):
 def get_cgroup_config(pid):
     """
     12  :cpuset         :/slurm_power92/uid_1500000082/job_68543/step_0
-    5   :devices        :/slurm_power92/uid_1500000082/job_68543/step_0
     4   :cpu,cpuacct    :/slurm_power92/uid_1500000082/job_68543/step_0/task_0
     3   :memory         :/slurm_power92/uid_1500000082/job_68543/step_0/task_0
     """
@@ -522,41 +521,77 @@ def daemon(args):
     last_report_time = 0
 
     client = MongoClient(args.mongodb)
-    collections = client.usage_reports.data
+    db = client.usage_monitor
+    health = db.health
+    collections = db.ts
+
+    if not args.dry_run:
+        health.update(
+            {'hostname': socket.gethostname()},
+            {
+                'push_every': args.push_every,
+                'daemon': args.daemon,
+                'alive': True,
+                'check_every': args.check_every,
+                'last_alive': str(datetime.datetime.utcnow()),
+                'errors': None
+            }, upsert=True)
 
     while True:
-        now = time.time()
-        report = []
+        try:
+            now = time.time()
+            report = []
 
-        # Time to check the node again
-        if now - last_report_time > args.check_every:
-            last_report_time = time.time()
-            raw_gpus, raw_pids, report = make_report()
+            # Time to check the node again
+            if now - last_report_time > args.check_every:
+                last_report_time = time.time()
+                raw_gpus, raw_pids, report = make_report()
 
-            if not args.no_print:
-                print(json.dumps(raw_gpus, indent=2))
-                print(json.dumps(raw_pids, indent=2))
-                print(json.dumps(report, indent=2))
+                if not args.no_print:
+                    print(json.dumps(raw_gpus, indent=2))
+                    print(json.dumps(raw_pids, indent=2))
+                    print(json.dumps(report, indent=2))
 
-        # if a report was generated add to the pending reports
-        if report:
-            to_be_pushed.extend(report)
+            # if a report was generated add to the pending reports
+            if report:
+                to_be_pushed.extend(report)
 
-        # Time to push to DB
-        if now - last_push_time > args.push_every or not args.daemon:
-            if len(to_be_pushed) > 0 and not args.dry_run:
-                collections.insert_many(to_be_pushed)
-                print(f'Inserting {len(to_be_pushed)}')
+            # Time to push to DB
+            if now - last_push_time > args.push_every or not args.daemon:
+                if len(to_be_pushed) > 0 and not args.dry_run:
+                    collections.insert_many(to_be_pushed)
+                    print(f'Inserting {len(to_be_pushed)}')
 
-            to_be_pushed = []
-            last_push_time = time.time()
+                to_be_pushed = []
+                last_push_time = time.time()
 
-        if not args.daemon:
-            client.close()
-            break
+            if not args.daemon:
+                client.close()
+                break
 
-        # do not use 100% of the processor
-        time.sleep(0.01)
+            # do not use 100% of the processor
+            time.sleep(0.01)
+
+        except Exception as e:
+            if not args.dry_run:
+                health.update(
+                    {'hostname': socket.gethostname()},
+                    {
+                        '$push': {'errors': str(e)}
+                    }
+                )
+
+    if not args.dry_run:
+        health.update(
+            {'hostname': socket.gethostname()},
+            {
+                'push_every': args.push_every,
+                'daemon': args.daemon,
+                'alive': False,
+                'check_every': args.check_every,
+                'last_died': str(datetime.datetime.utcnow())
+            }
+        )
 
 
 if __name__ == '__main__':
