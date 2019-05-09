@@ -61,7 +61,7 @@ import socket
 import datetime
 import time
 import psutil
-
+import traceback
 
 notuser_users = frozenset({
     'systemd+',
@@ -138,8 +138,8 @@ class ParentProcess:
                 self.system['mem_vms'] = mem.vms
                 self.system['mem_uss'] = mem.uss
 
-            except psutil.AccessDenied as e:
-                self.errors['psutil'] = str(e)
+            except psutil.AccessDenied:
+                self.errors['psutil'] = str(traceback.format_exc())
 
     def add_cgroup(self):
         try:
@@ -153,8 +153,9 @@ class ParentProcess:
                 nk = k.replace('.', '_')
                 self.cgroup[nk] = v
 
-        except FileNotFoundError as e:
-            self.errors['cgroup_error'] = e.filename
+        except Exception:
+            self.errors['cgroup_error'] = str(traceback.format_exc())
+
 
 
 def get_parent(proc):
@@ -316,6 +317,7 @@ def parse_cpuset(data):
         try:
             b, u = gpu_set.split('-')
             cpu_count += int(u) - int(b) + 1
+
         except Exception as e:
             cpu_count += 1
 
@@ -358,34 +360,26 @@ def get_slurm_cg(cgroup_file):
 
     for row in cgroup_file:
         data = row.split(':')
-        try:
-            if data[2].startswith('/slurm'):
-                return list(filter(lambda x: len(x.strip()) > 0, data[2].split('/')))
-        except IndexError:
-            pass
+        if data[2].startswith('/slurm'):
+            return list(filter(lambda x: len(x.strip()) > 0, data[2].split('/')))
 
 
 def get_slurm_job_request(jid):
-    try:
-        line = cmd_get_slurm_job_info(jid)
-        tres_alloc = line[:255]
-        tres_node = line[255:255 * 2]
-        command = line[255 * 2:]
+    line = cmd_get_slurm_job_info(jid)
+    tres_alloc = line[:255]
+    tres_node = line[255:255 * 2]
+    command = line[255 * 2:]
 
-        resources = {
-            'tres_per_node': tres_node.strip(),
-            'command': command.strip()
-        }
+    resources = {
+        'tres_per_node': tres_node.strip(),
+        'command': command.strip()
+    }
 
-        for res in tres_alloc.split(','):
-            k, v = res.split('=')
-            resources[k.strip()] = v.strip()
+    for res in tres_alloc.split(','):
+        k, v = res.split('=')
+        resources[k.strip()] = v.strip()
 
-        return resources
-
-    except Exception as e:
-        print(e)
-        return None
+    return resources
 
 
 def get_cgroup_config(pid):
@@ -397,8 +391,6 @@ def get_cgroup_config(pid):
 
     cgroup_file = open(f'/proc/{pid}/cgroup', 'r').read().split('\n')
     slurm_cg_all = get_slurm_cg(cgroup_file)
-    if slurm_cg_all is None:
-        return None
 
     uid = slurm_cg_all[1].split('_')[1]
     job = slurm_cg_all[2].split('_')[1]
@@ -407,7 +399,6 @@ def get_cgroup_config(pid):
     cgroup_config = {
         'uid': uid,
         'job': job,
-        'slurm': get_slurm_job_request(job)
     }
 
     for cname, cfile, parser in cgroup_constraint:
@@ -419,7 +410,14 @@ def get_cgroup_config(pid):
                 cgroup_config[cfile] = parser(data)
 
         except Exception as e:
-            cgroup_config[cfile] = str(e)
+            cgroup_config[f'{cfile}_error'] = str(traceback.format_exc())
+
+    # Get Slurm info
+    try:
+        cgroup_config['slurm'] = get_slurm_job_request(job)
+
+    except Exception as e:
+        cgroup_config['slurm_error'] = str(traceback.format_exc())
 
     return cgroup_config
 
@@ -427,8 +425,6 @@ def get_cgroup_config(pid):
 def insert_cgroup_config(pid, process_report):
     try:
         cgroup_config = get_cgroup_config(pid)
-        if cgroup_config is None:
-            return
 
         cgroup_config2 = {}
         process_report['cgroup'] = cgroup_config2
@@ -437,8 +433,8 @@ def insert_cgroup_config(pid, process_report):
             nk = k.replace('.', '_')
             cgroup_config2[nk] = v
 
-    except FileNotFoundError as e:
-        process_report['cgroup_error'] = e.filename
+    except Exception:
+        process_report['errors']['cgroup'] = str(traceback.format_exc())
 
 
 def filter_pids(all_pids):
@@ -461,7 +457,8 @@ def make_report():
 
         # Get GPU usage per process
         raw_pids = parse_csv_to_dict(cmd_get_gpu_pid())
-    except:
+    except Exception as e:
+        print(traceback.format_exc())
         raw_gpus = []
         raw_pids = []
 
@@ -536,7 +533,7 @@ def daemon(args):
                     'check_every': args.check_every,
                     'last_alive': str(datetime.datetime.utcnow()),
                     'errors': [],
-                    'heart': 0
+                    'heart': 1
                 }
             }, upsert=True)
 
@@ -591,7 +588,7 @@ def daemon(args):
                 health.update_one(
                     {'hostname': socket.gethostname()},
                     {
-                        '$push': {'errors': str(e)}
+                        '$push': {'errors': str(traceback.format_exc())}
                     }
                 )
 
@@ -601,7 +598,8 @@ def daemon(args):
             {
                 '$set': {
                     'alive': False,
-                    'last_died': str(datetime.datetime.utcnow())
+                    'last_died': str(datetime.datetime.utcnow()),
+                    'heart': 0
                 }
             }
         )
