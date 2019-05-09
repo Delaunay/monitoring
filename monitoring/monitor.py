@@ -381,7 +381,7 @@ def get_slurm_job_request(jid):
             k, v = res.split('=')
             resources[k.strip()] = v.strip()
 
-        return res
+        return resources
 
     except Exception as e:
         print(e)
