@@ -289,7 +289,7 @@ status_query = \
 
 def cmd_get_gpu_info():
     cmd = f'nvidia-smi --query-gpu={status_query} --format=csv,nounits -u'
-    print(cmd)
+    # print(cmd)
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
@@ -298,7 +298,12 @@ pid_query = 'timestamp,pid,name,gpu_name,used_memory,gpu_bus_id,gpu_uuid,gpu_ser
 
 def cmd_get_gpu_pid():
     cmd = f'nvidia-smi --query-compute-apps={pid_query} --format=csv,nounits -u'
-    print(cmd)
+    # print(cmd)
+    return subprocess.check_output(cmd, shell=True).decode('utf-8')
+
+
+def cmd_get_slurm_job_info(jid):
+    cmd = f'squeue -j {jid} -O tres-alloc,tres-per-node -h'
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
@@ -339,17 +344,18 @@ def parse_memory_limit(data):
 
 
 cgroup_regex = r'\/slurm.*'
-cgroup_constraint_set = {'cpuset', 'cpu,cpuacct', 'devices', 'memory'}
+cgroup_constraint_set = {'cpuset', 'cpu,cpuacct', 'memory'}
 cgroup_constraint = [
     ('cpuset'       , 'cpuset.effective_cpus', parse_cpuset),
     ('cpu,cpuacct'  , 'cpuacct.usage_percpu', parse_cpuacct),
-    ('devices'      , 'devices.allow', parse_devices),
     ('memory'       , 'memory.usage_in_bytes', parse_memory_used),
     ('memory'       , 'memory.limit_in_bytes', parse_memory_limit)
 ]
 
 
 def get_slurm_cg(cgroup_file):
+    # /slurm_hostname/uid_XXXXX/job_XXXX/
+
     for row in cgroup_file:
         data = row.split(':')
         try:
@@ -357,6 +363,31 @@ def get_slurm_cg(cgroup_file):
                 return list(filter(lambda x: len(x.strip()) > 0, data[2].split('/')))
         except IndexError:
             pass
+
+
+def get_slurm_job_request(jid):
+    try:
+        line = cmd_get_slurm_job_info(jid)
+        data = line.split(',')
+        out = {}
+
+        def split(d):
+            try:
+                k, v = d.split('=')
+                return k, v
+            except:
+                return d.split(':')
+
+        for field in data:
+            k, v = split(field)
+            out[k.strip()] = v.strip()
+
+        return out
+
+    except Exception as e:
+        print(e)
+        return None
+
 
 def get_cgroup_config(pid):
     """
@@ -371,8 +402,15 @@ def get_cgroup_config(pid):
     if slurm_cg_all is None:
         return None
 
-    slurm_cg = '/'.join(slurm_cg_all[0:3])
-    cgroup_config = {}
+    uid = slurm_cg_all[1].split('_')[1]
+    job = slurm_cg_all[2].split('_')[1]
+
+    slurm_cg = '/'.join(slurm_cg_all[0:2])
+    cgroup_config = {
+        'uid': uid,
+        'job': job,
+        'slurm': get_slurm_job_request(job)
+    }
 
     for cname, cfile, parser in cgroup_constraint:
         cgroup_data = f'/sys/fs/cgroup/{cname}/{slurm_cg}/{cfile}'
@@ -541,3 +579,4 @@ if __name__ == '__main__':
         print(f'{k:>30}:{v}')
 
     daemon(opt)
+
