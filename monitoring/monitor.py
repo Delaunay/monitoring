@@ -529,12 +529,14 @@ def daemon(args):
         health.update_one(
             {'hostname': socket.gethostname()},
             {
-                'push_every': args.push_every,
-                'daemon': args.daemon,
-                'alive': True,
-                'check_every': args.check_every,
-                'last_alive': str(datetime.datetime.utcnow()),
-                'errors': None
+                '$set': {
+                    'push_every': args.push_every,
+                    'daemon': args.daemon,
+                    'alive': True,
+                    'check_every': args.check_every,
+                    'last_alive': str(datetime.datetime.utcnow()),
+                    'errors': None
+                }
             }, upsert=True)
 
     while True:
@@ -585,11 +587,10 @@ def daemon(args):
         health.update_one(
             {'hostname': socket.gethostname()},
             {
-                'push_every': args.push_every,
-                'daemon': args.daemon,
-                'alive': False,
-                'check_every': args.check_every,
-                'last_died': str(datetime.datetime.utcnow())
+                '$set': {
+                    'alive': False,
+                    'last_died': str(datetime.datetime.utcnow())
+                }
             }
         )
 
