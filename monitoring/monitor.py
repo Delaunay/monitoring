@@ -526,7 +526,7 @@ def daemon(args):
     collections = db.ts
 
     if not args.dry_run:
-        health.update(
+        health.update_one(
             {'hostname': socket.gethostname()},
             {
                 'push_every': args.push_every,
@@ -574,7 +574,7 @@ def daemon(args):
 
         except Exception as e:
             if not args.dry_run:
-                health.update(
+                health.update_one(
                     {'hostname': socket.gethostname()},
                     {
                         '$push': {'errors': str(e)}
@@ -582,7 +582,7 @@ def daemon(args):
                 )
 
     if not args.dry_run:
-        health.update(
+        health.update_one(
             {'hostname': socket.gethostname()},
             {
                 'push_every': args.push_every,
