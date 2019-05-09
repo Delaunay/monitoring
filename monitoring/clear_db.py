@@ -9,7 +9,8 @@ parser.add_argument('--delete-observed', action='store_true', default=False)
 args = parser.parse_args()
 
 client = MongoClient(args.mongodb)
-db = client.usage_reports
-collection = db.data
+db = client.usage_monitor
+health = db.health
+collections = db.ts
 
-collection.drop()
+collections.drop()

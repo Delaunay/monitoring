@@ -1,7 +1,6 @@
-import json
 import argparse
 from pymongo import MongoClient
-
+import json
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--mongodb', default='mongodb://172.16.38.50:27017')
@@ -14,8 +13,6 @@ db = client.usage_monitor
 health = db.health
 collections = db.ts
 
-k = 500
-for i in collections.find().limit(k):
+for i in health.find():
     i['_id'] = str(i['_id'])
     print(json.dumps(i, indent=2))
-

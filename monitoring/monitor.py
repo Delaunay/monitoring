@@ -529,12 +529,14 @@ def daemon(args):
             {'hostname': socket.gethostname()},
             {
                 '$set': {
+                    'hostname': socket.gethostname(),
                     'push_every': args.push_every,
                     'daemon': args.daemon,
                     'alive': True,
                     'check_every': args.check_every,
                     'last_alive': str(datetime.datetime.utcnow()),
-                    'errors': None
+                    'errors': [],
+                    'heart': 0
                 }
             }, upsert=True)
 
@@ -560,6 +562,14 @@ def daemon(args):
             # Time to push to DB
             if now - last_push_time > args.push_every or not args.daemon:
                 if len(to_be_pushed) > 0 and not args.dry_run:
+                    health.update_one(
+                        {'hostname': socket.gethostname()},
+                        {
+                            '$set': {
+                                'heart': time.time()
+                            }
+                        }
+                    )
                     collections.insert_many(to_be_pushed)
                     print(f'Inserting {len(to_be_pushed)}')
 
@@ -572,6 +582,9 @@ def daemon(args):
 
             # do not use 100% of the processor
             time.sleep(0.01)
+
+        except KeyboardInterrupt:
+            break
 
         except Exception as e:
             if not args.dry_run:
