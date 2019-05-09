@@ -273,13 +273,13 @@ def make_gpu_db(data):
 
 def get_process_info(pid):
     cmd = f'ps -o "pid,user,%cpu,%mem,c,etime,ppid,rss,time,vsz,comm" -p {pid}'
-    print(cmd)
+    #print(cmd)
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
 def cmd_get_all_process_pid():
     cmd = f'ps -eo "user,pid,comm" | grep -v root'
-    print(cmd)
+    #print(cmd)
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
@@ -303,7 +303,7 @@ def cmd_get_gpu_pid():
 
 
 def cmd_get_slurm_job_info(jid):
-    cmd = f'squeue -j {jid} -O tres-alloc,tres-per-node -h'
+    cmd = f'squeue -j {jid} -O tres-alloc:255.,tres-per-node:255.,command::255. -h'
     return subprocess.check_output(cmd, shell=True).decode('utf-8')
 
 
@@ -368,21 +368,20 @@ def get_slurm_cg(cgroup_file):
 def get_slurm_job_request(jid):
     try:
         line = cmd_get_slurm_job_info(jid)
-        data = line.split(',')
-        out = {}
+        tres_alloc = line[:255]
+        tres_node = line[255:255 * 2]
+        command = line[255 * 2:]
 
-        def split(d):
-            try:
-                k, v = d.split('=')
-                return k, v
-            except:
-                return d.split(':')
+        resources = {
+            'tres_per_node': tres_node.strip(),
+            'command': command.strip()
+        }
 
-        for field in data:
-            k, v = split(field)
-            out[k.strip()] = v.strip()
+        for res in tres_alloc.split(','):
+            k, v = res.split('=')
+            resources[k.strip()] = v.strip()
 
-        return out
+        return res
 
     except Exception as e:
         print(e)
